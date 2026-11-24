@@ -127,19 +127,16 @@ A **spectrogram U-Net**, with a few deliberate choices that matter for music
 restoration:
 
 ```mermaid
-flowchart TB
-    W[waveform] --> S["Compressed complex STFT<br/>(real, imag) · |X|^0.3<br/>1024 bins × T frames"]
-    S --> E1[enc 32] --> E2[enc 64] --> E3[enc 128] --> E4[enc 256] --> E5[enc 256]
-    E5 --> BN["⏱️ Transformer along time<br/>(bottleneck)"]
-    BN --> D5[dec] --> D4[dec] --> D3[dec] --> D2[dec] --> D1[dec]
-    E4 -. skip .-> D5
-    E3 -. skip .-> D4
-    E2 -. skip .-> D3
-    E1 -. skip .-> D2
-    D1 --> H[1×1 head]
-    S -- "residual (+)" --> R((+))
+flowchart LR
+    W[🎵 waveform] --> S["complex STFT<br/>real + imag<br/>|X|^0.3"]
+    S --> ENC["Encoder<br/>5 levels · 32→256 ch<br/>freq ÷2 every level<br/>time ÷2 first 3"]
+    ENC --> BN["⏱️ Transformer<br/>along time"]
+    BN --> DEC["Decoder<br/>5 levels"]
+    ENC -. skip connections .-> DEC
+    DEC --> H[1×1 head<br/>Δ]
+    S -- residual --> R((+))
     H --> R
-    R --> I[inverse STFT] --> O[restored waveform]
+    R --> I[inverse<br/>STFT] --> O[🎚️ restored]
 ```
 
 | Choice | Why |
