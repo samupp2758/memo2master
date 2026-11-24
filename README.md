@@ -1,202 +1,287 @@
-# memo2master
+<div align="center">
 
-Turn phone **voice memos of live worship-band sets** into **production-grade recordings**.
+# 🎙️ → 🎚️ memo2master
 
-A rebuild of my senior project. The idea: take professionally produced live
-recordings of a CCM (contemporary Christian music) band, **synthetically degrade**
-them so they sound like a phone voice memo from the back of the room, and train a
-**spectrogram U-Net** to undo the damage. Then point the model at real voice memos
-of college bands playing the same style.
+**Turn phone voice memos of live band sets into production-grade recordings.**
 
-```
- YouTube (clean, produced)                                 real voice memos
-          │                                                        │
-          ▼                                                        ▼
-   ingest: download → 44.1 kHz mono FLAC → segments         infer: chunk + crossfade
-          │                                                        ▲
-          ▼                                                        │
-   degrade (Pedalboard, random every chunk) ──► (degraded, clean) ──► Spectrogram U-Net
-```
+A spectrogram U-Net trained on professionally produced live recordings that were
+*deliberately wrecked* to sound like they were captured on a phone in the back row.
 
----
+![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
+![Pedalboard](https://img.shields.io/badge/Spotify-Pedalboard-1DB954?logo=spotify&logoColor=white)
+![Status](https://img.shields.io/badge/status-research%20in%20progress-orange)
 
-## Approach
+[The idea](#-the-idea) •
+[How it works](#-how-it-works) •
+[Degradation chain](#-the-degradation-chain) •
+[Model](#-the-model) •
+[Quickstart](#-quickstart) •
+[Roadmap](#-roadmap)
 
-### 1. Data: clean audio from YouTube, damage made on the fly
-
-Only clean audio is stored. Each time the data loader draws a 4-second chunk, a
-**freshly randomized Pedalboard chain** turns it into a fake voice memo. So the
-model never sees the same degradation twice, and disk usage stays at 1× the clean
-corpus no matter how long you train.
-
-The chain follows the physical signal path of a phone recording a live band:
-
-| # | Stage | Implementation | Imitates |
-|---|---|---|---|
-| 1 | Room | `Convolution` with real room impulse responses, or `Reverb` fallback | chapel / gym reverb |
-| 2 | Distance EQ | `HighShelfFilter` + `LowShelfFilter` | standing far from the PA |
-| 3 | Noise | real noise beds or 1/f colored noise, optional mains hum, random SNR | crowd, HVAC, clapping |
-| 4 | Phone mic | `HighpassFilter` + random `PeakFilter`s | tiny capsule, no lows |
-| 5 | AGC | slow envelope-following gain (numpy) | voice-memo "breathing" |
-| 6 | Compressor | `Compressor`, fast attack, high ratio | phone dynamics processing |
-| 7 | Limiter | `Limiter` | brick-walled loudness |
-| 8 | Clipping | `Gain` → `Clipping` → `Gain` | kick / chorus overloading the mic |
-| 9 | Bandwidth | `Resample` to 8–32 kHz and back | lost highs |
-| 10 | Codec | `MP3Compressor` (rarely `GSMFullRateCompressor`) | lossy encoding artifacts |
-
-Every stage fires with probability `p`, and every parameter is sampled from the
-ranges in [`configs/degrade.yaml`](configs/degrade.yaml). The output stays
-sample-aligned with the clean input: impulse responses are trimmed to their
-direct-path peak.
-
-> **Domain gap is the main risk.** The model only learns to undo the damage it was
-> trained on. Always run the **audition** step and A/B the fake memos against
-> real ones before training. Dropping real RIRs into `data/rirs/` and real crowd
-> or room noise into `data/noise/` helps a lot.
-
-### 2. Model: spectrogram U-Net, done carefully
-
-[`memo2master/models/unet.py`](memo2master/models/unet.py)
-
-- **Input/output:** compressed complex STFT (2048 window, 512 hop at 44.1 kHz,
-  magnitude^0.3), stored as real and imaginary channels. Phase is modeled, not
-  copied from the noisy input, which keeps drum transients sharp.
-- **Residual mapping, not a mask:** `output = input + U-Net(input)`. A
-  multiplicative mask can't rebuild highs the codec removed (anything × 0 = 0).
-  Mapping lets the model do bandwidth extension.
-- **Asymmetric downsampling:** frequency halves at every level (1024 → 32 bins);
-  time halves only at the first three levels.
-- **Bottleneck:** a small transformer along time, for long-range context like
-  sustained pads and room tails.
-- **Identity start:** the output layer is zero-initialized, so training starts
-  from "output = input" and only learns the correction.
-
-### 3. Loss
-
-- Multi-resolution STFT loss (spectral convergence + log-magnitude, at 4 resolutions)
-- Compressed-complex MSE (phase-aware)
-
-**Planned stage 2:** HiFi-GAN-style multi-period and multi-scale discriminators
-with feature-matching loss. Pure regression losses produce a clean but slightly
-muffled "average" sound, and adversarial training is what brings back realistic
-air and transients.
-
-### 4. Evaluation
-
-- **Synthetic test split** (held out per *video*, so no song leaks): SI-SDR and
-  log-spectral distance, reported as input → output improvement.
-- **Real voice memos** (no reference exists). Planned: Fréchet Audio Distance
-  against the clean set, plus blind listening tests with musicians.
+</div>
 
 ---
 
-## Project layout
+## 💡 The idea
 
-```
-configs/
-  degrade.yaml        # the degradation chain: stages, probabilities, ranges
-  train.yaml          # model / loss / training hyperparameters
-sources/
-  sources.txt         # YouTube URLs (videos, playlists, channels)
-memo2master/
-  audio.py            # ffmpeg decode, save, loudness normalization
-  ingest/
-    download.py       # yt-dlp audio-only download with resume archive
-    prepare.py        # → 44.1k mono FLAC, LUFS-normalized 30 s segments, per-video split
-  degrade/
-    chain.py          # randomized Pedalboard degradation chain
-    audition.py       # write clean/degraded example pairs to listen to
-  data/
-    dataset.py        # on-the-fly paired chunks for PyTorch
-  models/
-    stft.py           # compressed complex STFT and its inverse
-    unet.py           # SpecUNet + Restorer (waveform in/out wrapper)
-  train/
-    losses.py         # multi-res STFT + compressed complex losses
-    train.py          # training loop (CUDA / MPS / CPU, bf16, checkpoints)
-  eval/
-    metrics.py        # SI-SDR, log-spectral distance
-    evaluate.py       # score a checkpoint on the test split
-  infer/
-    run.py            # restore a full-length memo with overlap-add
-tests/
-  test_pipeline.py    # degrader shape/alignment/determinism, model round-trip
-data/                 # (gitignored) raw/, clean/, rirs/, noise/
-runs/                 # (gitignored) checkpoints and logs
-```
+In college I had hours of **voice memos** from my friends' bands playing live
+contemporary Christian music (CCM) sets. They were recorded on phones, in
+chapels and gyms, usually from the back of the room. The music was good. The
+recordings were not.
+
+There's no paired data for this problem. Nobody has a studio-quality version of
+the same performance a phone happened to record. So this project **makes the
+pairs itself**:
+
+1. Take **clean**, professionally produced live recordings in the same style
+   (shared with permission by my university's CCM band).
+2. Run them through a **randomized degradation chain** that imitates everything
+   a phone does to a live recording.
+3. Train a model to map **degraded → clean**.
+4. Point it at **real** voice memos and listen.
+
+This repo is a from-scratch rebuild of my senior project, whose code was lost.
+The original architecture is kept (Pedalboard degradation and a spectrogram
+U-Net), along with the lessons learned since.
 
 ---
 
-## Quickstart
+## 🔁 How it works
 
-Requires **Python 3.10–3.13** (PyTorch and Pedalboard have no 3.14+ wheels yet)
-and **ffmpeg** on your PATH.
+```mermaid
+flowchart LR
+    subgraph Ingest["📥 Ingest"]
+        YT[YouTube<br/>produced live sets] --> DL[yt-dlp<br/>audio only]
+        DL --> PREP[44.1 kHz mono FLAC<br/>loudness-normalized<br/>30 s segments]
+    end
+
+    subgraph Train["🧠 Training (on the fly)"]
+        PREP --> CHUNK[random 4 s chunk]
+        CHUNK --> DEG[🎛️ random<br/>Pedalboard chain]
+        DEG --> NOISY[fake voice memo]
+        NOISY --> UNET[Spectrogram U-Net]
+        CHUNK -. target .-> LOSS{{loss}}
+        UNET --> LOSS
+    end
+
+    subgraph Use["🎧 Inference"]
+        MEMO[real voice memo<br/>.m4a, any length] --> OLA[overlapping chunks]
+        OLA --> UNET2[trained U-Net]
+        UNET2 --> OUT[restored master<br/>.wav]
+    end
+```
+
+**Only clean audio is stored on disk.** Each chunk gets a fresh, randomly drawn
+degradation every time it's loaded, so the model never sees the same damage
+twice, and storage stays at 1× the clean corpus however long you train.
+
+---
+
+## 🎛️ The degradation chain
+
+Everything between the stage and the phone's saved file is imitated in the order
+it physically happens. Every stage fires with probability `p`, and every
+parameter is sampled from a range in [`configs/degrade.yaml`](configs/degrade.yaml).
+
+```mermaid
+flowchart LR
+    A[🎵 clean] --> B[🏛️ Room<br/>reverb / RIR]
+    B --> C[📏 Distance<br/>EQ tilt]
+    C --> D[👥 Noise<br/>crowd · HVAC · hum]
+    D --> E[🎤 Phone mic<br/>high-pass + resonances]
+    E --> F[📈 AGC<br/>gain breathing]
+    F --> G[🗜️ Compressor<br/>+ Limiter]
+    G --> H[💥 Clipping]
+    H --> I[📉 Bandwidth<br/>resample 8–32 kHz]
+    I --> J[💾 Codec<br/>MP3 / GSM]
+    J --> K[📱 voice memo]
+```
+
+| Stage | Pedalboard / numpy | What it imitates |
+|---|---|---|
+| 🏛️ Room | `Convolution` with real room impulse responses, or `Reverb` | chapel or gym acoustics |
+| 📏 Distance EQ | `HighShelfFilter` + `LowShelfFilter` | standing far from the PA |
+| 👥 Noise | real noise beds or 1/f colored noise, optional 50/60 Hz hum | audience, air conditioning, buzz |
+| 🎤 Phone mic | `HighpassFilter` + random `PeakFilter`s | tiny capsule with no low end |
+| 📈 AGC | envelope-following gain (numpy) | the "breathing" of voice memo auto-gain |
+| 🗜️ Dynamics | `Compressor`, `Limiter` | phone-side loudness processing |
+| 💥 Clipping | `Gain` → `Clipping` → `Gain` | kick drum and choruses overloading the mic |
+| 📉 Bandwidth | `Resample` down and back up | missing highs |
+| 💾 Codec | `MP3Compressor`, rarely `GSMFullRateCompressor` | lossy-encoding artifacts |
+
+Impulse responses are trimmed to their direct-path peak, so degraded audio stays
+**sample-aligned** with the clean target.
+
+> [!TIP]
+> **Listen before you train.** The model can only undo damage it has seen.
+> `memo2master.degrade.audition` writes clean and degraded pairs so you can A/B
+> them against real memos and tune the YAML until they sound like the same kind
+> of bad.
+
+---
+
+## 🧠 The model
+
+A **spectrogram U-Net**, with a few deliberate choices that matter for music
+restoration:
+
+```mermaid
+flowchart TB
+    W[waveform] --> S["Compressed complex STFT<br/>(real, imag) · |X|^0.3<br/>1024 bins × T frames"]
+    S --> E1[enc 32] --> E2[enc 64] --> E3[enc 128] --> E4[enc 256] --> E5[enc 256]
+    E5 --> BN["⏱️ Transformer along time<br/>(bottleneck)"]
+    BN --> D5[dec] --> D4[dec] --> D3[dec] --> D2[dec] --> D1[dec]
+    E4 -. skip .-> D5
+    E3 -. skip .-> D4
+    E2 -. skip .-> D3
+    E1 -. skip .-> D2
+    D1 --> H[1×1 head]
+    S -- "residual (+)" --> R((+))
+    H --> R
+    R --> I[inverse STFT] --> O[restored waveform]
+```
+
+| Choice | Why |
+|---|---|
+| **Complex (real + imag) spectrogram** | Phase is modeled instead of copied from the noisy input, so drum transients stay sharp. |
+| **Power-law compression (\|X\|^0.3)** | Music has huge dynamic range; compression keeps quiet high-frequency detail visible to the loss. |
+| **Residual mapping, not a mask** | A mask can't recreate highs the codec deleted (anything × 0 = 0). `output = input + Δ` can. |
+| **Asymmetric downsampling** | Frequency halves at every level; time halves only at the first three, preserving rhythmic detail. |
+| **Time-attention bottleneck** | Long-range context for sustained pads, held vocals and room tails. |
+| **Zero-initialized head** | Training starts from "output = input" and only learns the correction. |
+
+**Loss:** multi-resolution STFT loss (four resolutions) plus an MSE loss on the
+compressed complex spectrogram.
+
+**Planned stage 2:** HiFi-GAN-style adversarial discriminators. Regression losses
+alone tend toward a clean but slightly muffled average; adversarial training
+brings back air and attack.
+
+---
+
+## 🚀 Quickstart
+
+**Requirements:** Python **3.10–3.13** and **ffmpeg** on your `PATH`.
+A CUDA GPU with 16 GB+ is recommended for training; Apple Silicon (MPS) works
+for experiments.
 
 ```bash
+git clone https://github.com/samupp2758/memo2master.git
+cd memo2master
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
 
-### 1. Download clean recordings
+### 1 · Collect clean recordings
 
-Add URLs to `sources/sources.txt` (only recordings you have permission to use), then:
+Add YouTube URLs (videos, playlists or channels) to
+[`sources/sources.txt`](sources/sources.txt). Only use recordings you have
+permission to use.
 
 ```bash
 python -m memo2master.ingest.download --sources sources/sources.txt --out data/raw
 ```
 
-### 2. Prepare segments
+### 2 · Prepare segments
 
 ```bash
 python -m memo2master.ingest.prepare --raw data/raw --out data/clean
 ```
 
-### 3. Listen before you train
+### 3 · Audition the degradation 🎧
 
 ```bash
 python -m memo2master.degrade.audition --clean data/clean --n 12 --out auditions/
 ```
 
-Open `auditions/` and compare `NN_degraded.wav` against real voice memos. Tune
-`configs/degrade.yaml` until they sound like the same kind of bad.
-
-### 4. Train
+### 4 · Train
 
 ```bash
 python -m memo2master.train.train --config configs/train.yaml
 ```
 
-The defaults (batch 8, 4 s chunks, bf16) target a 16 GB GPU. Degradation runs on
-the CPU in data-loader workers, so raise `num_workers` if the GPU is starved.
-
-### 5. Evaluate and restore
+### 5 · Evaluate
 
 ```bash
 python -m memo2master.eval.evaluate --ckpt runs/baseline/last.pt
 ```
 
+### 6 · Restore a real voice memo
+
 ```bash
 python -m memo2master.infer.run --ckpt runs/baseline/last.pt --input memo.m4a --output memo_master.wav
 ```
 
+<details>
+<summary><b>Optional: real room impulse responses and noise beds</b></summary>
+
+The chain falls back to algorithmic reverb and generated colored noise. For more
+realistic degradations, drop audio files into:
+
+- `data/rirs/`: room impulse responses (for example from the OpenAIR library or
+  the MIT IR Survey)
+- `data/noise/`: crowd chatter, applause, HVAC, phone handling noise
+
+Both folders are picked up automatically from `configs/degrade.yaml`.
+</details>
+
 ---
 
-## Roadmap
+## 📊 Evaluation
 
-- [x] Ingest pipeline (yt-dlp → segmented FLAC + manifest)
+| Setting | How it's measured |
+|---|---|
+| **Synthetic test split** | Held out per *video*, so no song leaks from training. Reports SI-SDR and log-spectral distance as **input → output** improvement. |
+| **Real voice memos** | No clean reference exists. Planned: Fréchet Audio Distance against the clean corpus, plus blind listening tests with musicians. |
+
+---
+
+## 🗂️ Project layout
+
+```
+memo2master/
+├── configs/
+│   ├── degrade.yaml        # degradation stages, probabilities, parameter ranges
+│   └── train.yaml          # model, loss and training hyperparameters
+├── sources/sources.txt     # YouTube URLs to ingest
+├── memo2master/
+│   ├── audio.py            # ffmpeg decoding, saving, loudness normalization
+│   ├── ingest/             # download.py (yt-dlp) · prepare.py (segments + manifest)
+│   ├── degrade/            # chain.py (Pedalboard chain) · audition.py
+│   ├── data/               # dataset.py: on-the-fly (degraded, clean) pairs
+│   ├── models/             # stft.py · unet.py (SpecUNet + Restorer)
+│   ├── train/              # losses.py · train.py
+│   ├── eval/               # metrics.py · evaluate.py
+│   └── infer/              # run.py: full-length restoration with crossfades
+└── tests/                  # degrader + model sanity checks
+```
+
+`data/`, `runs/` and all audio files are git-ignored. No audio is ever committed.
+
+---
+
+## 🛣️ Roadmap
+
+- [x] Ingest pipeline: yt-dlp → segmented FLAC + manifest
 - [x] Randomized Pedalboard degradation chain + audition tool
-- [x] Spectrogram U-Net baseline (complex, residual mapping, time attention)
-- [x] Training loop, evaluation, long-file inference
-- [ ] Collect real RIRs + noise beds; tune degradation against real memos
-- [ ] Stage 2: GAN discriminators (multi-period / multi-scale) + feature matching
-- [ ] Re-recorded pairs: play clean tracks through a PA, record on a phone, align, fine-tune
-- [ ] FAD + listening-test harness for real memos
+- [x] Spectrogram U-Net baseline (complex, residual, time attention)
+- [x] Training loop, evaluation and long-file inference
+- [ ] Collect real RIRs and noise beds; tune the chain against real memos
+- [ ] **Stage 2:** adversarial training (multi-period and multi-scale discriminators)
+- [ ] **Real pairs:** play clean tracks through a PA, record them on a phone, align, fine-tune
+- [ ] FAD and listening-test harness for real memos
 - [ ] Stereo output
-- [ ] v2: stem separation → per-stem restoration → learned automix
+- [ ] **v2:** stem separation → per-stem restoration → learned automix
 
-## Data and permissions
+---
 
-Clean training audio comes from recordings used with the permission of the
-performing band. No audio is committed to this repo (see `.gitignore`), and
-model outputs of copyrighted songs are for research and personal use.
+## 🙏 Acknowledgements and data
+
+- [Pedalboard](https://github.com/spotify/pedalboard) by Spotify, which powers
+  the degradation chain.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for ingestion.
+- Clean training recordings are used with the permission of the performing band.
+  This is a research project; restored recordings of copyrighted songs are for
+  personal and educational use.
