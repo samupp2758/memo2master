@@ -11,6 +11,7 @@ A spectrogram U-Net trained on professionally produced live recordings that were
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
 ![Pedalboard](https://img.shields.io/badge/Spotify-Pedalboard-1DB954?logo=spotify&logoColor=white)
 ![Status](https://img.shields.io/badge/status-research%20in%20progress-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [The idea](#-the-idea) •
 [How it works](#-how-it-works) •
@@ -282,3 +283,8 @@ memo2master/
 - Clean training recordings are used with the permission of the performing band.
   This is a research project; restored recordings of copyrighted songs are for
   personal and educational use.
+
+## 📄 License
+
+The code is released under the [MIT License](LICENSE). The license covers this
+repository's source code only, not any audio you download or process with it.
