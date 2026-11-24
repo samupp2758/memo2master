@@ -6,10 +6,10 @@ __pycache__/
 .pytest_cache/
 
 # Audio data and outputs (never commit audio)
-data/
-runs/
-auditions/
-outputs/
+/data/
+/runs/
+/auditions/
+/outputs/
 *.wav
 *.flac
 *.mp3
