@@ -1,0 +1,29 @@
+[project]
+name = "memo2master"
+version = "0.1.0"
+description = "Turn phone voice memos of live worship-band sets into production-grade recordings with a spectrogram U-Net trained on synthetically degraded audio."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "pedalboard>=0.9",
+    "pyloudnorm>=0.1.1",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "yt-dlp>=2024.1.1",
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["memo2master*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

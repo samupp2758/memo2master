@@ -1,0 +1,5 @@
+# One YouTube URL per line: videos, playlists, or channel pages all work.
+# Lines starting with # are ignored.
+# Only add recordings you have permission to use.
+#
+# https://www.youtube.com/playlist?list=...

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Audio data and outputs (never commit audio)
+data/
+runs/
+auditions/
+outputs/
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.opus
+*.webm
+
+# Checkpoints
+*.pt
+*.ckpt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
