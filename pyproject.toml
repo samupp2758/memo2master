@@ -12,7 +12,7 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     "pyyaml>=6.0",
     "tqdm>=4.66",
-    "yt-dlp>=2024.1.1",
+    "yt-dlp[default]>=2025.11.12",
     "torch>=2.2",
 ]
 
